@@ -14,11 +14,11 @@ iptables -A INPUT -i lo -p all -j ACCEPT
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 ### DROPspoofing packets
-iptables -A INPUT -s 10.0.0.0/8 -j DROP 
+#iptables -A INPUT -s 10.0.0.0/8 -j DROP 
 iptables -A INPUT -s 169.254.0.0/16 -j DROP
 iptables -A INPUT -s 172.16.0.0/12 -j DROP
 iptables -A INPUT -s 127.0.0.0/8 -j DROP
-#iptables -A INPUT -s 192.168.0.0/24 -j DROP
+iptables -A INPUT -s 192.168.0.0/24 -j DROP
 
 iptables -A INPUT -s 224.0.0.0/4 -j DROP
 iptables -A INPUT -d 224.0.0.0/4 -j DROP
@@ -42,6 +42,13 @@ iptables -A OUTPUT -m state --state INVALID -j DROP
 # flooding of RST packets, smurf attack Rejection
 iptables -A INPUT -p tcp -m tcp --tcp-flags RST RST -m limit --limit 2/second --limit-burst 2 -j ACCEPT
 
+# These rules add scanners to the portscan list, and log the attempt.
+iptables -A INPUT -p tcp -m tcp --dport 139 -m recent --name portscan --set -j LOG --log-prefix "portscan:"
+iptables -A INPUT -p tcp -m tcp --dport 139 -m recent --name portscan --set -j DROP
+
+iptables -A FORWARD -p tcp -m tcp --dport 139 -m recent --name portscan --set -j LOG --log-prefix "portscan:"
+iptables -A FORWARD -p tcp -m tcp --dport 139 -m recent --name portscan --set -j DROP
+
 # Protecting portscans
 # Attacking IP will be locked for 24 hours (3600 x 24 = 86400 Seconds)
 iptables -A INPUT -m recent --name portscan --rcheck --seconds 86400 -j DROP
@@ -51,23 +58,28 @@ iptables -A FORWARD -m recent --name portscan --rcheck --seconds 86400 -j DROP
 iptables -A INPUT -m recent --name portscan --remove
 iptables -A FORWARD -m recent --name portscan --remove
 
-# These rules add scanners to the portscan list, and log the attempt.
-iptables -A INPUT -p tcp -m tcp --dport 139 -m recent --name portscan --set -j LOG --log-prefix "portscan:"
-iptables -A INPUT -p tcp -m tcp --dport 139 -m recent --name portscan --set -j DROP
-
-iptables -A FORWARD -p tcp -m tcp --dport 139 -m recent --name portscan --set -j LOG --log-prefix "portscan:"
-iptables -A FORWARD -p tcp -m tcp --dport 139 -m recent --name portscan --set -j DROP
-
 # Allow ping means ICMP port is open (If you do not want ping replace ACCEPT with REJECT)
 iptables -A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT
 
 ## Protection from Slowloris
+
 # Limit connections per source IP
-/sbin/iptables -A INPUT -p tcp -m connlimit --connlimit-above 111 -j REJECT --reject-with tcp-reset
+/sbin/iptables -A INPUT -p tcp -m connlimit --connlimit-above 111 -m recent --name bruteforce --set -j LOG --log-prefix "bruteforce:"
+#/sbin/iptables -A INPUT -p tcp -m connlimit --connlimit-above 111 -m recent --name bruteforce --set -j REJECT --reject-with tcp-reset
+/sbin/iptables -A INPUT -p tcp -m connlimit --connlimit-above 111 -m recent --name bruteforce --set -j DROP
 
 # Limit new TCP connections per second per source IP
 /sbin/iptables -A INPUT -p tcp -m conntrack --ctstate NEW -m limit --limit 60/s --limit-burst 20 -j ACCEPT
-/sbin/iptables -A INPUT -p tcp -m conntrack --ctstate NEW -j DROP
+/sbin/iptables -A INPUT -p tcp -m conntrack --ctstate NEW -m recent --name bruteforce --set -j LOG --log-prefix "bruteforce:"
+/sbin/iptables -A INPUT -p tcp -m conntrack --ctstate NEW -m recent --name bruteforce --set -j DROP
+
+# Ban
+iptables -A INPUT -m recent --name bruteforce --rcheck --seconds 86400 -j DROP
+iptables -A FORWARD -m recent --name bruteforce --rcheck --seconds 86400 -j DROP
+
+# Remove attacking IP after 24 hours
+iptables -A INPUT -m recent --name bruteforce --remove
+iptables -A FORWARD -m recent --name bruteforce --remove
 ##
 
 # Allow the following ports through from outside
